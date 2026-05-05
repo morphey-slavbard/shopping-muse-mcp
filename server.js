@@ -31,6 +31,13 @@ function escapeHtml(str) {
     .replace(/'/g, "&#39;");
 }
 
+function buildRuntimeBaseUrl(req) {
+  const host = req.get("host") || "";
+  const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+  const runtimeBaseUrl = host ? `${protocol}://${host}` : "";
+  return (process.env.PUBLIC_BASE_URL || runtimeBaseUrl).replace(/\/$/, "");
+}
+
 // Precisely extract products from the DY Shopping Muse response shape:
 // choices[0].variations[0].payload.data.widgets[].slots[].productData
 function extractFromDYResponse(data) {
@@ -139,39 +146,50 @@ app.all("/mcp", async (req, res) => {
 
       const { assistantText, groups } = extractFromDYResponse(data);
       const totalProducts = groups.reduce((n, g) => n + g.products.length, 0);
+      const baseUrl = buildRuntimeBaseUrl(req);
 
-      const productLines = [];
-      for (const group of groups) {
-        if (group.title) {
-          productLines.push(`### ${group.title}`);
-          productLines.push("");
-        }
-        for (const p of group.products || []) {
-          const name = [p.brand, p.name].filter(Boolean).join(" ") || "Product";
-          const price = p.price !== null ? ` - GBP ${Number(p.price).toFixed(2)}` : "";
-          productLines.push(`- ${name}${price}`);
-          if (p.image) {
-            productLines.push(`![Product image](<${p.image}>)`);
-          }
-          if (p.url) {
-            productLines.push(`[View product](<${p.url}>)`);
-          } else {
-            productLines.push("Link unavailable");
-          }
-          productLines.push("");
-        }
-      }
+      const normalizedProducts = groups.flatMap((group) =>
+        (group.products || []).map((p) => {
+          const proxiedImage = p.image
+            ? baseUrl
+              ? `${baseUrl}/img-proxy?url=${encodeURIComponent(p.image)}`
+              : p.image
+            : null;
+          return {
+            groupTitle: group.title || "",
+            sku: p.sku || null,
+            brand: p.brand || "",
+            name: p.name || "Product",
+            color: p.color || "",
+            price: p.price,
+            url: p.url || null,
+            image: proxiedImage,
+            inStock: p.inStock,
+          };
+        })
+      );
 
-      const linksBlock = productLines.length
-        ? productLines.join("\n")
-        : "No product links were returned for this query.";
+      const previewLines = normalizedProducts.slice(0, 8).map((p) => {
+        const price = p.price !== null ? `GBP ${Number(p.price).toFixed(2)}` : "Price unavailable";
+        const link = p.url || "Link unavailable";
+        return `- ${p.brand} ${p.name} | ${price} | ${link}`.trim();
+      });
+
+      const previewText = previewLines.length
+        ? previewLines.join("\n")
+        : "No products were returned for this query.";
 
       return {
-        structuredContent: { assistantText, groups, totalProducts },
+        structuredContent: {
+          assistantText,
+          totalProducts,
+          products: normalizedProducts,
+          renderHint: "visual_cards",
+        },
         content: [
           {
             type: "text",
-            text: `${assistantText}\n\nProducts:\n${linksBlock}`,
+            text: `${assistantText}\n\nFound ${totalProducts} products.\n${previewText}`,
           },
         ],
       };
@@ -181,6 +199,41 @@ app.all("/mcp", async (req, res) => {
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await server.connect(transport);
   await transport.handleRequest(req, res, req.body);
+});
+
+// Proxies product images through this domain to avoid client-side host allowlist blocks
+app.get("/img-proxy", async (req, res) => {
+  try {
+    const raw = req.query.url;
+    if (!raw || typeof raw !== "string") {
+      res.status(400).send("Missing url query param");
+      return;
+    }
+
+    const target = new URL(raw);
+    if (!/^https?:$/.test(target.protocol)) {
+      res.status(400).send("Invalid url protocol");
+      return;
+    }
+    if (["localhost", "127.0.0.1", "::1"].includes(target.hostname)) {
+      res.status(400).send("Blocked host");
+      return;
+    }
+
+    const upstream = await fetch(target.toString(), { redirect: "follow" });
+    if (!upstream.ok) {
+      res.status(502).send(`Image fetch failed: ${upstream.status}`);
+      return;
+    }
+
+    const contentType = upstream.headers.get("content-type") || "application/octet-stream";
+    const buffer = Buffer.from(await upstream.arrayBuffer());
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.send(buffer);
+  } catch (err) {
+    res.status(500).send(`Proxy error: ${err.message}`);
+  }
 });
 
 // Product recommendation widget — renders grouped product cards
@@ -197,8 +250,14 @@ app.get("/widget", (req, res) => {
     .map((group) => {
       const cards = (group.products ?? [])
         .map((p) => {
+          const baseUrl = buildRuntimeBaseUrl(req);
+          const proxiedImage = p.image
+            ? baseUrl
+              ? `${baseUrl}/img-proxy?url=${encodeURIComponent(p.image)}`
+              : p.image
+            : null;
           const img = p.image
-            ? `<img src="${escapeHtml(p.image)}" alt="${escapeHtml(p.name)}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
+            ? `<img src="${escapeHtml(proxiedImage)}" alt="${escapeHtml(p.name)}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
             : "";
           const imgFallback = `<div class="img-placeholder" style="display:${p.image ? "none" : "flex"}">🛍️</div>`;
           const brand = p.brand ? `<div class="brand">${escapeHtml(p.brand)}</div>` : "";
