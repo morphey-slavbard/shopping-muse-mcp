@@ -78,7 +78,7 @@ app.all("/mcp", async (req, res) => {
 
   server.tool(
     "shopping_muse_search",
-    "Search for fashion and retail products using Dynamic Yield's Shopping Muse AI assistant. Use this to answer natural language shopping queries like 'summer office dresses' or 'casual trainers under £100'. Return direct product links in the chat output.",
+    "Search for fashion and retail products using Dynamic Yield's Shopping Muse AI assistant. Use this to answer natural language shopping queries like 'summer office dresses' or 'casual trainers under £100'. IMPORTANT: Present results as visual markdown product cards (image plus clickable product link) and do not replace them with a prose summary.",
     {
       query: z.string().describe("Natural language shopping query from the user"),
       dyid: z.string().optional().describe("Dynamic Yield user ID for personalisation (optional)"),
@@ -171,17 +171,7 @@ app.all("/mcp", async (req, res) => {
         })
       );
 
-      const previewLines = normalizedProducts.slice(0, 8).map((p) => {
-        const price = p.price !== null ? `GBP ${Number(p.price).toFixed(2)}` : "Price unavailable";
-        const link = p.url || "Link unavailable";
-        return `- ${p.brand} ${p.name} | ${price} | ${link}`.trim();
-      });
-
-      const previewText = previewLines.length
-        ? previewLines.join("\n")
-        : "No products were returned for this query.";
-
-      const markdownCards = normalizedProducts.slice(0, 6).flatMap((p) => {
+      const markdownCards = normalizedProducts.slice(0, 12).flatMap((p) => {
         const price = p.price !== null ? `GBP ${Number(p.price).toFixed(2)}` : "Price unavailable";
         const heading = `**${[p.brand, p.name].filter(Boolean).join(" ")}** (${price})`;
         const lines = [heading];
@@ -192,6 +182,9 @@ app.all("/mcp", async (req, res) => {
       });
 
       const markdownCardsText = markdownCards.join("\n").trim();
+      const feedText = markdownCardsText
+        ? `SHOW THESE PRODUCT CARDS EXACTLY AS WRITTEN:\n\n${markdownCardsText}`
+        : "No products were returned for this query.";
 
       return {
         structuredContent: {
@@ -203,7 +196,7 @@ app.all("/mcp", async (req, res) => {
         content: [
           {
             type: "text",
-            text: `${assistantText}\n\nFound ${totalProducts} products.${markdownCardsText ? `\n\n${markdownCardsText}` : ""}\n\nText summary:\n${previewText}`,
+            text: `${assistantText}\n\n${feedText}`,
           },
         ],
       };
