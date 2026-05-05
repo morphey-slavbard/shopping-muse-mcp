@@ -9,6 +9,98 @@ app.use(express.json());
 const DY_API_URL = "https://dy-api.com/v2/serve/user/assistant";
 const DY_API_KEY = process.env.DY_API_KEY;
 
+function parsePrice(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const cleaned = value.replace(/[^0-9.,-]/g, "").replace(/,/g, "");
+    const parsed = Number.parseFloat(cleaned);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function extractProductsFromResponse(payload) {
+  const products = [];
+  const seen = new Set();
+
+  function walk(node) {
+    if (!node || typeof node !== "object") {
+      return;
+    }
+
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        walk(item);
+      }
+      return;
+    }
+
+    const name = node.name || node.title || node.productName || node.displayName;
+    const brand = node.brand || node.brandName || node.vendor;
+    const url = node.url || node.productUrl || node.link || node.href;
+    const image = node.image || node.imageUrl || node.thumbnail || node.primaryImage;
+
+    const priceCandidates = [
+      node.price,
+      node.currentPrice,
+      node.salePrice,
+      node.priceValue,
+      node.amount,
+      node.value,
+      node?.price?.value,
+      node?.price?.amount,
+      node?.pricing?.price,
+      node?.pricing?.currentPrice,
+    ];
+    const price = priceCandidates.map(parsePrice).find((candidate) => candidate !== null) ?? null;
+
+    if (typeof name === "string" && name.trim()) {
+      const stableKey = `${name}|${url || ""}|${price ?? ""}`;
+      if (!seen.has(stableKey)) {
+        seen.add(stableKey);
+        products.push({
+          name: name.trim(),
+          brand: typeof brand === "string" ? brand : null,
+          price,
+          currency: node.currency || node.currencyCode || null,
+          url: typeof url === "string" ? url : null,
+          image: typeof image === "string" ? image : null,
+          category: node.category || node.productType || null,
+        });
+      }
+    }
+
+    for (const value of Object.values(node)) {
+      walk(value);
+    }
+  }
+
+  walk(payload);
+  return products.slice(0, 24);
+}
+
+function formatProductsForText(products) {
+  if (!products.length) {
+    return null;
+  }
+
+  const lines = ["Top product matches:"];
+  for (const [index, product] of products.slice(0, 12).entries()) {
+    const priceText = product.price !== null ? ` - ${product.price.toFixed(2)}${product.currency ? ` ${product.currency}` : ""}` : "";
+    const brandText = product.brand ? `${product.brand} ` : "";
+    const linkText = product.url ? ` (${product.url})` : "";
+    lines.push(`${index + 1}. ${brandText}${product.name}${priceText}${linkText}`);
+  }
+
+  return lines.join("\n");
+}
+
 app.all("/mcp", async (req, res) => {
   const server = new McpServer({
     name: "shopping-muse",
@@ -90,11 +182,18 @@ app.all("/mcp", async (req, res) => {
         };
       }
 
+      const products = extractProductsFromResponse(data);
+      const formattedProducts = formatProductsForText(products);
+
       return {
+        structuredContent: {
+          products,
+          totalProducts: products.length,
+        },
         content: [
           {
             type: "text",
-            text: JSON.stringify(data, null, 2),
+            text: formattedProducts || JSON.stringify(data, null, 2),
           },
         ],
       };
