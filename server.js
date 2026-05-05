@@ -35,7 +35,7 @@ function buildRuntimeBaseUrl(req) {
   const host = req.get("host") || "";
   const protocol = req.headers["x-forwarded-proto"] || req.protocol;
   const runtimeBaseUrl = host ? `${protocol}://${host}` : "";
-  return (process.env.PUBLIC_BASE_URL || runtimeBaseUrl).replace(/\/$/, "");
+  return runtimeBaseUrl.replace(/\/$/, "");
 }
 
 // Precisely extract products from the DY Shopping Muse response shape:
@@ -203,7 +203,7 @@ app.all("/mcp", async (req, res) => {
         content: [
           {
             type: "text",
-            text: `${assistantText}\n\nFound ${totalProducts} products.\n${previewText}${markdownCardsText ? `\n\n${markdownCardsText}` : ""}`,
+            text: `${assistantText}\n\nFound ${totalProducts} products.${markdownCardsText ? `\n\n${markdownCardsText}` : ""}\n\nText summary:\n${previewText}`,
           },
         ],
       };
