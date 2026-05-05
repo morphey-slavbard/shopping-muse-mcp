@@ -85,22 +85,6 @@ function extractProductsFromResponse(payload) {
   return products.slice(0, 24);
 }
 
-function formatProductsForText(products) {
-  if (!products.length) {
-    return null;
-  }
-
-  const lines = ["Top product matches:"];
-  for (const [index, product] of products.slice(0, 12).entries()) {
-    const priceText = product.price !== null ? ` - ${product.price.toFixed(2)}${product.currency ? ` ${product.currency}` : ""}` : "";
-    const brandText = product.brand ? `${product.brand} ` : "";
-    const linkText = product.url ? ` (${product.url})` : "";
-    lines.push(`${index + 1}. ${brandText}${product.name}${priceText}${linkText}`);
-  }
-
-  return lines.join("\n");
-}
-
 app.all("/mcp", async (req, res) => {
   const server = new McpServer({
     name: "shopping-muse",
@@ -183,17 +167,38 @@ app.all("/mcp", async (req, res) => {
       }
 
       const products = extractProductsFromResponse(data);
-      const formattedProducts = formatProductsForText(products);
+
+      // Build widget URL with only the fields needed for display (keeps URL short)
+      const widgetPayload = products.map((p) => ({
+        name: p.name,
+        brand: p.brand,
+        price: p.price,
+        currency: p.currency,
+        url: p.url,
+        image: p.image,
+      }));
+      const widgetData = Buffer.from(JSON.stringify(widgetPayload)).toString("base64url");
+      const host = req.get("host");
+      const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+      const widgetUrl = `${protocol}://${host}/widget?data=${widgetData}`;
 
       return {
         structuredContent: {
           products,
           totalProducts: products.length,
+          widgetUrl,
         },
         content: [
           {
+            type: "resource",
+            resource: {
+              uri: widgetUrl,
+              mimeType: "text/html",
+            },
+          },
+          {
             type: "text",
-            text: formattedProducts || JSON.stringify(data, null, 2),
+            text: JSON.stringify({ products, totalProducts: products.length }, null, 2),
           },
         ],
       };
@@ -207,6 +212,74 @@ app.all("/mcp", async (req, res) => {
   await server.connect(transport);
   await transport.handleRequest(req, res, req.body);
 });
+
+// Product recommendation widget
+app.get("/widget", (req, res) => {
+  let products = [];
+  try {
+    const raw = Buffer.from(req.query.data || "", "base64url").toString("utf8");
+    products = JSON.parse(raw);
+  } catch {
+    // return empty widget on bad data
+  }
+
+  const cards = products
+    .map((p) => {
+      const img = p.image
+        ? `<img src="${escapeHtml(p.image)}" alt="${escapeHtml(p.name)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
+        : "";
+      const imgFallback = `<div class="img-placeholder" style="display:${p.image ? "none" : "flex"}">🛍️</div>`;
+      const brand = p.brand ? `<div class="brand">${escapeHtml(p.brand)}</div>` : "";
+      const price =
+        p.price !== null
+          ? `<div class="price">${p.currency ? escapeHtml(p.currency) + " " : ""}${Number(p.price).toFixed(2)}</div>`
+          : "";
+      const link = p.url
+        ? `<a class="btn" href="${escapeHtml(p.url)}" target="_blank" rel="noopener noreferrer">View product</a>`
+        : "";
+      return `<div class="card">${img}${imgFallback}${brand}<div class="name">${escapeHtml(p.name)}</div>${price}${link}</div>`;
+    })
+    .join("");
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Shopping Muse results</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f8f8f8;padding:16px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px}
+  .card{background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08);display:flex;flex-direction:column}
+  .card img{width:100%;aspect-ratio:1;object-fit:cover}
+  .img-placeholder{width:100%;aspect-ratio:1;background:#f0f0f0;align-items:center;justify-content:center;font-size:2.5rem}
+  .card .brand{font-size:11px;font-weight:600;color:#888;text-transform:uppercase;padding:10px 10px 0}
+  .card .name{font-size:13px;font-weight:500;color:#222;padding:6px 10px;flex:1}
+  .card .price{font-size:14px;font-weight:700;color:#111;padding:0 10px 8px}
+  .card .btn{display:block;margin:0 10px 10px;padding:8px;background:#111;color:#fff;text-decoration:none;border-radius:6px;text-align:center;font-size:12px;font-weight:600;transition:background .2s}
+  .card .btn:hover{background:#333}
+  .empty{text-align:center;color:#aaa;padding:40px;font-size:14px}
+</style>
+</head>
+<body>
+  ${cards ? `<div class="grid">${cards}</div>` : '<div class="empty">No products found.</div>'}
+</body>
+</html>`;
+
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("X-Frame-Options", "ALLOWALL");
+  res.send(html);
+});
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 // Health check endpoint
 app.get("/", (req, res) => {
