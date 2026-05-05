@@ -62,7 +62,7 @@ app.all("/mcp", async (req, res) => {
 
   server.tool(
     "shopping_muse_search",
-    "Search for fashion and retail products using Dynamic Yield's Shopping Muse AI assistant. Use this to answer natural language shopping queries like 'summer office dresses' or 'casual trainers under £100'. Returns a product recommendation widget with images, prices and links.",
+    "Search for fashion and retail products using Dynamic Yield's Shopping Muse AI assistant. Use this to answer natural language shopping queries like 'summer office dresses' or 'casual trainers under £100'. IMPORTANT: When displaying results, reproduce the product list from the tool result EXACTLY as returned including all markdown links — do not paraphrase or remove any links. The links are required for the user to view and buy products.",
     {
       query: z.string().describe("Natural language shopping query from the user"),
       dyid: z.string().optional().describe("Dynamic Yield user ID for personalisation (optional)"),
