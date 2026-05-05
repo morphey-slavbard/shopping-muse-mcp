@@ -10,6 +10,8 @@ const DY_API_URL = "https://dy-api.com/v2/serve/user/assistant";
 const DY_API_KEY = process.env.DY_API_KEY;
 // Optional: set SITE_BASE_URL in Railway if product URLs are relative (e.g. https://www.mystore.com)
 const SITE_BASE_URL = (process.env.SITE_BASE_URL || "").replace(/\/$/, "");
+const WIDGET_TTL_MS = 1000 * 60 * 30;
+const widgetStore = new Map();
 
 function toAbsoluteUrl(rawUrl, baseUrl = "") {
   if (!rawUrl || typeof rawUrl !== "string") return null;
@@ -20,8 +22,20 @@ function toAbsoluteUrl(rawUrl, baseUrl = "") {
   }
 }
 
-function escapeMarkdownLabel(str) {
-  return String(str ?? "").replace(/[\\`*_{}\[\]()#+\-.!|]/g, "\\$&");
+function createWidgetToken(groups) {
+  const token = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  widgetStore.set(token, { groups, expiresAt: Date.now() + WIDGET_TTL_MS });
+  return token;
+}
+
+function getWidgetGroupsFromToken(token) {
+  const entry = widgetStore.get(token);
+  if (!entry) return [];
+  if (entry.expiresAt < Date.now()) {
+    widgetStore.delete(token);
+    return [];
+  }
+  return entry.groups;
 }
 
 function escapeHtml(str) {
@@ -146,30 +160,15 @@ app.all("/mcp", async (req, res) => {
       const protocol = req.headers["x-forwarded-proto"] || req.protocol;
       const runtimeBaseUrl = host ? `${protocol}://${host}` : "";
       const BASE_URL = (process.env.PUBLIC_BASE_URL || runtimeBaseUrl).replace(/\/$/, "");
-      const encoded = Buffer.from(JSON.stringify({ groups }), "utf8").toString("base64url");
-      const widgetUrl = `${BASE_URL}/widget?data=${encoded}`;
-
-      // Build product list with clickable markdown links
-      const productLines = groups.flatMap((group) => {
-        const lines = [];
-        if (group.title) lines.push(`\n**${group.title}**`);
-        for (const p of group.products) {
-          const price = p.price !== null ? ` — £${Number(p.price).toFixed(2)}` : "";
-          const brand = p.brand ? `${p.brand} ` : "";
-          const label = escapeMarkdownLabel(`${brand}${p.name ?? "Product"}${price}`);
-          lines.push(p.url ? `- [${label}](<${p.url}>)` : `- ${label}`);
-        }
-        return lines;
-      });
-
-      const productListText = productLines.join("\n");
+      const token = createWidgetToken(groups);
+      const widgetUrl = `${BASE_URL}/widget?t=${token}`;
 
       return {
         structuredContent: { assistantText, groups, totalProducts, widgetUrl },
         content: [
           {
             type: "text",
-            text: `${assistantText}\n${productListText}\n\n[🛍️ View all ${totalProducts} product${totalProducts !== 1 ? "s" : ""} →](${widgetUrl})`,
+            text: `${assistantText}\n\n[View all ${totalProducts} product${totalProducts !== 1 ? "s" : ""}](<${widgetUrl}>)`,
           },
         ],
       };
@@ -185,8 +184,13 @@ app.all("/mcp", async (req, res) => {
 app.get("/widget", (req, res) => {
   let groups = [];
   try {
-    const raw = Buffer.from(req.query.data || "", "base64url").toString("utf8");
-    groups = JSON.parse(raw).groups ?? [];
+    const token = req.query.t;
+    if (token) {
+      groups = getWidgetGroupsFromToken(String(token));
+    } else {
+      const raw = Buffer.from(req.query.data || "", "base64url").toString("utf8");
+      groups = JSON.parse(raw).groups ?? [];
+    }
   } catch {
     // fall through to empty state
   }
