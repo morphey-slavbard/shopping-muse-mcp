@@ -173,9 +173,13 @@ app.all("/mcp", async (req, res) => {
 
       const markdownCards = normalizedProducts.slice(0, 12).flatMap((p) => {
         const price = p.price !== null ? `GBP ${Number(p.price).toFixed(2)}` : "Price unavailable";
-        const heading = `**${[p.brand, p.name].filter(Boolean).join(" ")}** (${price})`;
-        const lines = [heading];
-        if (p.image) lines.push(`![Product image](<${p.image}>)`);
+        const title = [p.brand, p.name].filter(Boolean).join(" ") || "Product";
+        const lines = [];
+        if (p.image) {
+          lines.push(`![${title}](<${p.image}>)`);
+        }
+        lines.push(`**${title}**`);
+        lines.push(`${price}`);
         lines.push(p.url ? `[View product](<${p.url}>)` : "Link unavailable");
         lines.push("");
         return lines;
@@ -183,7 +187,7 @@ app.all("/mcp", async (req, res) => {
 
       const markdownCardsText = markdownCards.join("\n").trim();
       const feedText = markdownCardsText
-        ? `SHOW THESE PRODUCT CARDS EXACTLY AS WRITTEN:\n\n${markdownCardsText}`
+        ? `## Products\n\n${markdownCardsText}`
         : "No products were returned for this query.";
 
       return {
@@ -196,7 +200,7 @@ app.all("/mcp", async (req, res) => {
         content: [
           {
             type: "text",
-            text: `${assistantText}\n\n${feedText}`,
+            text: feedText,
           },
         ],
       };
