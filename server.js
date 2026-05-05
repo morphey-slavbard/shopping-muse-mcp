@@ -11,6 +11,19 @@ const DY_API_KEY = process.env.DY_API_KEY;
 // Optional: set SITE_BASE_URL in Railway if product URLs are relative (e.g. https://www.mystore.com)
 const SITE_BASE_URL = (process.env.SITE_BASE_URL || "").replace(/\/$/, "");
 
+function toAbsoluteUrl(rawUrl, baseUrl = "") {
+  if (!rawUrl || typeof rawUrl !== "string") return null;
+  try {
+    return new URL(rawUrl, baseUrl || undefined).toString();
+  } catch {
+    return null;
+  }
+}
+
+function escapeMarkdownLabel(str) {
+  return String(str ?? "").replace(/[\\`*_{}\[\]()#+\-.!|]/g, "\\$&");
+}
+
 function escapeHtml(str) {
   return String(str ?? "")
     .replace(/&/g, "&amp;")
@@ -31,12 +44,8 @@ function extractFromDYResponse(data) {
   const groups = widgets.map((widget) => {
     const products = (widget.slots ?? []).map((slot) => {
       const p = slot.productData ?? {};
-      const rawUrl = p.url ?? null;
-      const url = rawUrl
-        ? rawUrl.startsWith("http")
-          ? rawUrl
-          : `${SITE_BASE_URL}${rawUrl}`
-        : null;
+      const rawUrl = p.url ?? slot.url ?? slot.link ?? null;
+      const url = toAbsoluteUrl(rawUrl, SITE_BASE_URL);
       return {
         sku: slot.sku ?? null,
         name: p.name ?? null,
@@ -133,7 +142,10 @@ app.all("/mcp", async (req, res) => {
       const { assistantText, groups } = extractFromDYResponse(data);
       const totalProducts = groups.reduce((n, g) => n + g.products.length, 0);
 
-      const BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/$/, "");
+      const host = req.get("host") || "";
+      const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+      const runtimeBaseUrl = host ? `${protocol}://${host}` : "";
+      const BASE_URL = (process.env.PUBLIC_BASE_URL || runtimeBaseUrl).replace(/\/$/, "");
       const encoded = Buffer.from(JSON.stringify({ groups }), "utf8").toString("base64url");
       const widgetUrl = `${BASE_URL}/widget?data=${encoded}`;
 
@@ -144,8 +156,8 @@ app.all("/mcp", async (req, res) => {
         for (const p of group.products) {
           const price = p.price !== null ? ` — £${Number(p.price).toFixed(2)}` : "";
           const brand = p.brand ? `${p.brand} ` : "";
-          const label = `${brand}${p.name}${price}`;
-          lines.push(p.url ? `- [${label}](${p.url})` : `- ${label}`);
+          const label = escapeMarkdownLabel(`${brand}${p.name ?? "Product"}${price}`);
+          lines.push(p.url ? `- [${label}](<${p.url}>)` : `- ${label}`);
         }
         return lines;
       });
