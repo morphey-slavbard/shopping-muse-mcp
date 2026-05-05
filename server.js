@@ -9,7 +9,9 @@ app.use(express.json());
 const DY_API_URL = "https://dy-api.com/v2/serve/user/assistant";
 const DY_API_KEY = process.env.DY_API_KEY;
 // Optional: set SITE_BASE_URL in Railway if product URLs are relative (e.g. https://www.mystore.com)
-const SITE_BASE_URL = (process.env.SITE_BASE_URL || "").replace(/\/$/, "");
+const SITE_BASE_URL = (
+  process.env.SITE_BASE_URL || "https://se-demo-retail.use1.dev.pub.dydy.io"
+).replace(/\/$/, "");
 
 function toAbsoluteUrl(rawUrl, baseUrl = "") {
   if (!rawUrl || typeof rawUrl !== "string") return null;
