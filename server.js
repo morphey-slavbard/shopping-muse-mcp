@@ -10,8 +10,6 @@ const DY_API_URL = "https://dy-api.com/v2/serve/user/assistant";
 const DY_API_KEY = process.env.DY_API_KEY;
 // Optional: set SITE_BASE_URL in Railway if product URLs are relative (e.g. https://www.mystore.com)
 const SITE_BASE_URL = (process.env.SITE_BASE_URL || "").replace(/\/$/, "");
-const WIDGET_TTL_MS = 1000 * 60 * 30;
-const widgetStore = new Map();
 
 function toAbsoluteUrl(rawUrl, baseUrl = "") {
   if (!rawUrl || typeof rawUrl !== "string") return null;
@@ -20,22 +18,6 @@ function toAbsoluteUrl(rawUrl, baseUrl = "") {
   } catch {
     return null;
   }
-}
-
-function createWidgetToken(groups) {
-  const token = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-  widgetStore.set(token, { groups, expiresAt: Date.now() + WIDGET_TTL_MS });
-  return token;
-}
-
-function getWidgetGroupsFromToken(token) {
-  const entry = widgetStore.get(token);
-  if (!entry) return [];
-  if (entry.expiresAt < Date.now()) {
-    widgetStore.delete(token);
-    return [];
-  }
-  return entry.groups;
 }
 
 function escapeHtml(str) {
@@ -85,7 +67,7 @@ app.all("/mcp", async (req, res) => {
 
   server.tool(
     "shopping_muse_search",
-    "Search for fashion and retail products using Dynamic Yield's Shopping Muse AI assistant. Use this to answer natural language shopping queries like 'summer office dresses' or 'casual trainers under £100'. IMPORTANT: When displaying results, reproduce the product list from the tool result EXACTLY as returned including all markdown links — do not paraphrase or remove any links. The links are required for the user to view and buy products.",
+    "Search for fashion and retail products using Dynamic Yield's Shopping Muse AI assistant. Use this to answer natural language shopping queries like 'summer office dresses' or 'casual trainers under £100'. Return direct product links in the chat output.",
     {
       query: z.string().describe("Natural language shopping query from the user"),
       dyid: z.string().optional().describe("Dynamic Yield user ID for personalisation (optional)"),
@@ -156,19 +138,30 @@ app.all("/mcp", async (req, res) => {
       const { assistantText, groups } = extractFromDYResponse(data);
       const totalProducts = groups.reduce((n, g) => n + g.products.length, 0);
 
-      const host = req.get("host") || "";
-      const protocol = req.headers["x-forwarded-proto"] || req.protocol;
-      const runtimeBaseUrl = host ? `${protocol}://${host}` : "";
-      const BASE_URL = (process.env.PUBLIC_BASE_URL || runtimeBaseUrl).replace(/\/$/, "");
-      const token = createWidgetToken(groups);
-      const widgetUrl = `${BASE_URL}/widget?t=${token}`;
+      const productLines = [];
+      for (const group of groups) {
+        if (group.title) productLines.push(`${group.title}:`);
+        for (const p of group.products || []) {
+          const name = [p.brand, p.name].filter(Boolean).join(" ") || "Product";
+          const price = p.price !== null ? ` - GBP ${Number(p.price).toFixed(2)}` : "";
+          if (p.url) {
+            productLines.push(`- ${name}${price} - ${p.url}`);
+          } else {
+            productLines.push(`- ${name}${price}`);
+          }
+        }
+      }
+
+      const linksBlock = productLines.length
+        ? productLines.join("\n")
+        : "No product links were returned for this query.";
 
       return {
-        structuredContent: { assistantText, groups, totalProducts, widgetUrl },
+        structuredContent: { assistantText, groups, totalProducts },
         content: [
           {
             type: "text",
-            text: `${assistantText}\n\n[View all ${totalProducts} product${totalProducts !== 1 ? "s" : ""}](<${widgetUrl}>)`,
+            text: `${assistantText}\n\nProducts:\n${linksBlock}`,
           },
         ],
       };
@@ -184,13 +177,8 @@ app.all("/mcp", async (req, res) => {
 app.get("/widget", (req, res) => {
   let groups = [];
   try {
-    const token = req.query.t;
-    if (token) {
-      groups = getWidgetGroupsFromToken(String(token));
-    } else {
-      const raw = Buffer.from(req.query.data || "", "base64url").toString("utf8");
-      groups = JSON.parse(raw).groups ?? [];
-    }
+    const raw = Buffer.from(req.query.data || "", "base64url").toString("utf8");
+    groups = JSON.parse(raw).groups ?? [];
   } catch {
     // fall through to empty state
   }
