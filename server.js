@@ -50,7 +50,9 @@ function extractFromDYResponse(data) {
     const products = (widget.slots ?? []).map((slot) => {
       const p = slot.productData ?? {};
       const rawUrl = p.url ?? slot.url ?? slot.link ?? null;
+      const rawImage = p.image_url ?? slot.image ?? null;
       const url = toAbsoluteUrl(rawUrl, SITE_BASE_URL);
+      const image = toAbsoluteUrl(rawImage, SITE_BASE_URL);
       return {
         sku: slot.sku ?? null,
         name: p.name ?? null,
@@ -58,7 +60,7 @@ function extractFromDYResponse(data) {
         color: p.color ?? null,
         price: typeof p.price === "number" ? p.price : null,
         url,
-        image: p.image_url ?? null,
+        image,
         inStock: p.in_stock ?? true,
       };
     });
@@ -179,6 +181,18 @@ app.all("/mcp", async (req, res) => {
         ? previewLines.join("\n")
         : "No products were returned for this query.";
 
+      const markdownCards = normalizedProducts.slice(0, 6).flatMap((p) => {
+        const price = p.price !== null ? `GBP ${Number(p.price).toFixed(2)}` : "Price unavailable";
+        const heading = `**${[p.brand, p.name].filter(Boolean).join(" ")}** (${price})`;
+        const lines = [heading];
+        if (p.image) lines.push(`![Product image](<${p.image}>)`);
+        lines.push(p.url ? `[View product](<${p.url}>)` : "Link unavailable");
+        lines.push("");
+        return lines;
+      });
+
+      const markdownCardsText = markdownCards.join("\n").trim();
+
       return {
         structuredContent: {
           assistantText,
@@ -189,7 +203,7 @@ app.all("/mcp", async (req, res) => {
         content: [
           {
             type: "text",
-            text: `${assistantText}\n\nFound ${totalProducts} products.\n${previewText}`,
+            text: `${assistantText}\n\nFound ${totalProducts} products.\n${previewText}${markdownCardsText ? `\n\n${markdownCardsText}` : ""}`,
           },
         ],
       };
@@ -210,7 +224,12 @@ app.get("/img-proxy", async (req, res) => {
       return;
     }
 
-    const target = new URL(raw);
+    let target;
+    try {
+      target = new URL(raw);
+    } catch {
+      target = new URL(raw, SITE_BASE_URL);
+    }
     if (!/^https?:$/.test(target.protocol)) {
       res.status(400).send("Invalid url protocol");
       return;
