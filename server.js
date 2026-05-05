@@ -142,15 +142,23 @@ app.all("/mcp", async (req, res) => {
 
       const productLines = [];
       for (const group of groups) {
-        if (group.title) productLines.push(`${group.title}:`);
+        if (group.title) {
+          productLines.push(`### ${group.title}`);
+          productLines.push("");
+        }
         for (const p of group.products || []) {
           const name = [p.brand, p.name].filter(Boolean).join(" ") || "Product";
           const price = p.price !== null ? ` - GBP ${Number(p.price).toFixed(2)}` : "";
-          if (p.url) {
-            productLines.push(`- ${name}${price} - ${p.url}`);
-          } else {
-            productLines.push(`- ${name}${price}`);
+          productLines.push(`- ${name}${price}`);
+          if (p.image) {
+            productLines.push(`![Product image](<${p.image}>)`);
           }
+          if (p.url) {
+            productLines.push(`[View product](<${p.url}>)`);
+          } else {
+            productLines.push("Link unavailable");
+          }
+          productLines.push("");
         }
       }
 
