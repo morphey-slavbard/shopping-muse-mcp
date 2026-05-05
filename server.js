@@ -137,16 +137,27 @@ app.all("/mcp", async (req, res) => {
       const encoded = Buffer.from(JSON.stringify({ groups }), "utf8").toString("base64url");
       const widgetUrl = `${BASE_URL}/widget?data=${encoded}`;
 
+      // Build product list with clickable markdown links
+      const productLines = groups.flatMap((group) => {
+        const lines = [];
+        if (group.title) lines.push(`\n**${group.title}**`);
+        for (const p of group.products) {
+          const price = p.price !== null ? ` — £${Number(p.price).toFixed(2)}` : "";
+          const brand = p.brand ? `${p.brand} ` : "";
+          const label = `${brand}${p.name}${price}`;
+          lines.push(p.url ? `- [${label}](${p.url})` : `- ${label}`);
+        }
+        return lines;
+      });
+
+      const productListText = productLines.join("\n");
+
       return {
         structuredContent: { assistantText, groups, totalProducts, widgetUrl },
         content: [
-          { type: "text", text: assistantText },
           {
-            type: "resource_link",
-            uri: widgetUrl,
-            name: "Shopping results",
-            description: "Open a grid of recommended products with images, prices and links",
-            mimeType: "text/html",
+            type: "text",
+            text: `${assistantText}\n${productListText}\n\n[🛍️ View all ${totalProducts} product${totalProducts !== 1 ? "s" : ""} →](${widgetUrl})`,
           },
         ],
       };
