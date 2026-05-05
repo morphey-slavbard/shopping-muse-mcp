@@ -133,18 +133,36 @@ app.all("/mcp", async (req, res) => {
       const { assistantText, groups } = extractFromDYResponse(data);
       const totalProducts = groups.reduce((n, g) => n + g.products.length, 0);
 
-      const widgetData = Buffer.from(JSON.stringify({ groups })).toString("base64url");
-      const host = req.get("host");
-      const protocol = req.headers["x-forwarded-proto"] || req.protocol;
-      const widgetUrl = `${protocol}://${host}/widget?data=${widgetData}`;
+      // Generate widget HTML inline
+      const sectionsHtml = groups
+        .map((group) => {
+          const cards = (group.products ?? [])
+            .map((p) => {
+              const img = p.image
+                ? `<img src="${escapeHtml(p.image)}" alt="${escapeHtml(p.name)}" loading="lazy" style="width:100%;aspect-ratio:4/5;object-fit:cover;display:block;background:#f8f8f8" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
+                : "";
+              const imgFallback = `<div style="width:100%;aspect-ratio:4/5;background:#f0f0f0;display:${p.image ? "none" : "flex"};align-items:center;justify-content:center;font-size:3rem">🛍️</div>`;
+              const brand = p.brand ? `<div style="font-size:10px;font-weight:700;color:#bbb;text-transform:uppercase;letter-spacing:.06em">${escapeHtml(p.brand)}</div>` : "";
+              const color = p.color ? `<div style="font-size:11px;color:#aaa;margin-top:1px">${escapeHtml(p.color)}</div>` : "";
+              const price = p.price !== null ? `<div style="font-size:15px;font-weight:700;color:#111;margin-top:4px">£${Number(p.price).toFixed(2)}</div>` : "";
+              const link = p.url
+                ? `<a href="${escapeHtml(p.url)}" target="_blank" rel="noopener noreferrer" style="display:block;margin-top:10px;padding:9px 10px;background:#111;color:#fff;text-decoration:none;border-radius:8px;text-align:center;font-size:12px;font-weight:600;letter-spacing:.02em">View product →</a>`
+                : "";
+              return `<div style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.07);display:flex;flex-direction:column">${img}${imgFallback}<div style="padding:10px 12px 12px;display:flex;flex-direction:column;flex:1;gap:3px">${brand}<div style="font-size:13px;font-weight:500;color:#222;flex:1;line-height:1.35;margin-top:2px">${escapeHtml(p.name)}</div>${color}${price}${link}</div></div>`;
+            })
+            .join("");
+          const title = group.title ? `<h2 style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#888;margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid #e5e5e5">${escapeHtml(group.title)}</h2>` : "";
+          return `<section style="margin-bottom:32px">${title}<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:14px">${cards}</div></section>`;
+        })
+        .join("");
+
+      const widgetHtml = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f5;padding:20px;color:#111;border-radius:12px">${sectionsHtml || '<div style="text-align:center;color:#bbb;padding:40px;font-size:14px">No products found.</div>'}</div>`;
 
       return {
-        structuredContent: { assistantText, groups, totalProducts, widgetUrl },
+        structuredContent: { assistantText, groups, totalProducts },
         content: [
-          {
-            type: "text",
-            text: `${assistantText}\n\n🛍️ **Product widget:** ${widgetUrl}`,
-          },
+          { type: "text", text: assistantText },
+          { type: "text", text: widgetHtml },
         ],
       };
     }
