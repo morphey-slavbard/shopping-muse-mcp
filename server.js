@@ -141,10 +141,9 @@ app.all("/mcp", async (req, res) => {
       return {
         structuredContent: { assistantText, groups, totalProducts, widgetUrl },
         content: [
-          { type: "text", text: assistantText },
           {
-            type: "resource",
-            resource: { uri: widgetUrl, mimeType: "text/html" },
+            type: "text",
+            text: `${assistantText}\n\n🛍️ **Product widget:** ${widgetUrl}`,
           },
         ],
       };
